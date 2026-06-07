@@ -9965,6 +9965,16 @@ pm_lex_percent_delimiter(pm_parser_t *parser) {
  */
 #define LEX(token_type) parser->current.type = token_type; parser_lex_callback(parser); return
 
+// Trace colors (debug only)
+#define TC_ENTER  "\x1b[36m"   // cyan: parse_expression enter/exit
+#define TC_PREFIX "\x1b[32m"   // green: prefix
+#define TC_INFIX  "\x1b[33m"   // yellow: infix
+#define TC_TAKE   "\x1b[35m"   // magenta: loop decision TAKE
+#define TC_STOP   "\x1b[31m"   // red: loop decision STOP
+#define TC_NODE   "\x1b[1m"    // bold: node name
+#define TC_DIM    "\x1b[2m"    // dim: supplementary values
+#define TC_R      "\x1b[0m"    // reset
+
 /**
  * Called when the parser requires a new token. The parser maintains a moving
  * window of two tokens at a time: parser.previous and parser.current. This
@@ -9974,6 +9984,13 @@ pm_lex_percent_delimiter(pm_parser_t *parser) {
 static void
 parser_lex(pm_parser_t *parser) {
     assert(parser->current.end <= parser->end);
+    if (parser->current.type == PM_TOKEN_NEWLINE) {
+        fprintf(stderr, TC_DIM "lex: consume newline" TC_R "\n");
+    } else {
+        fprintf(stderr, TC_DIM "lex: consume %s \"%.*s\"" TC_R "\n",
+                pm_token_str(parser->current.type),
+                (int) (parser->current.end - parser->current.start), parser->current.start);
+    }
     parser->previous = parser->current;
 
     // This value mirrors cmd_state from CRuby.
@@ -13451,12 +13468,16 @@ parse_targets_validate(pm_parser_t *parser, pm_node_t *first_target, pm_binding_
  */
 static pm_statements_node_t *
 parse_statements(pm_parser_t *parser, pm_context_t context, uint16_t depth) {
+    fprintf(stderr, "%*s" TC_ENTER TC_NODE "statements begin (%s)" TC_R "\n", depth * 2, "", context_human(context));
     // First, skip past any optional terminators that might be at the beginning
     // of the statements.
     while (accept2(parser, PM_TOKEN_SEMICOLON, PM_TOKEN_NEWLINE));
 
     // If we have a terminator, then we can just return NULL.
-    if (context_terminator(context, &parser->current)) return NULL;
+    if (context_terminator(context, &parser->current)) {
+        fprintf(stderr, "%*s" TC_ENTER TC_NODE "statements end (%s)" TC_R " -> empty\n", depth * 2, "", context_human(context));
+        return NULL;
+    }
 
     pm_statements_node_t *statements = pm_statements_node_create(parser);
 
@@ -13464,7 +13485,9 @@ parse_statements(pm_parser_t *parser, pm_context_t context, uint16_t depth) {
     // immediately follows the current token.
     context_push(parser, context);
 
+    int trace_statement = 0;
     while (true) {
+        fprintf(stderr, "%*s" TC_NODE "--- statement #%d (%s) ---" TC_R "\n", depth * 2, "", ++trace_statement, context_human(context));
         pm_node_t *node = parse_expression(parser, PM_BINDING_POWER_STATEMENT, PM_PARSE_ACCEPTS_COMMAND_CALL | PM_PARSE_ACCEPTS_DO_BLOCK, PM_ERR_CANNOT_PARSE_EXPRESSION, (uint16_t) (depth + 1));
         pm_statements_node_body_append(parser, statements, node, true);
 
@@ -13530,6 +13553,7 @@ parse_statements(pm_parser_t *parser, pm_context_t context, uint16_t depth) {
     }
 
     context_pop(parser);
+    fprintf(stderr, "%*s" TC_ENTER TC_NODE "statements end (%s)" TC_R " -> StatementsNode (%d stmts)\n", depth * 2, "", context_human(context), trace_statement);
 
     bool last_value = true;
     switch (context) {
@@ -21987,6 +22011,161 @@ parse_expression_terminator(pm_parser_t *parser, pm_node_t *node) {
  * Consumers of this function should always check parser->recovering to
  * determine if they need to perform additional cleanup.
  */
+static const char *pm_trace_node_names[] = {
+    [1] = "AliasGlobalVariableNode",
+    [2] = "AliasMethodNode",
+    [3] = "AlternationPatternNode",
+    [4] = "AndNode",
+    [5] = "ArgumentsNode",
+    [6] = "ArrayNode",
+    [7] = "ArrayPatternNode",
+    [8] = "AssocNode",
+    [9] = "AssocSplatNode",
+    [10] = "BackReferenceReadNode",
+    [11] = "BeginNode",
+    [12] = "BlockArgumentNode",
+    [13] = "BlockLocalVariableNode",
+    [14] = "BlockNode",
+    [15] = "BlockParameterNode",
+    [16] = "BlockParametersNode",
+    [17] = "BreakNode",
+    [18] = "CallAndWriteNode",
+    [19] = "CallNode",
+    [20] = "CallOperatorWriteNode",
+    [21] = "CallOrWriteNode",
+    [22] = "CallTargetNode",
+    [23] = "CapturePatternNode",
+    [24] = "CaseMatchNode",
+    [25] = "CaseNode",
+    [26] = "ClassNode",
+    [27] = "ClassVariableAndWriteNode",
+    [28] = "ClassVariableOperatorWriteNode",
+    [29] = "ClassVariableOrWriteNode",
+    [30] = "ClassVariableReadNode",
+    [31] = "ClassVariableTargetNode",
+    [32] = "ClassVariableWriteNode",
+    [33] = "ConstantAndWriteNode",
+    [34] = "ConstantOperatorWriteNode",
+    [35] = "ConstantOrWriteNode",
+    [36] = "ConstantPathAndWriteNode",
+    [37] = "ConstantPathNode",
+    [38] = "ConstantPathOperatorWriteNode",
+    [39] = "ConstantPathOrWriteNode",
+    [40] = "ConstantPathTargetNode",
+    [41] = "ConstantPathWriteNode",
+    [42] = "ConstantReadNode",
+    [43] = "ConstantTargetNode",
+    [44] = "ConstantWriteNode",
+    [45] = "DefNode",
+    [46] = "DefinedNode",
+    [47] = "ElseNode",
+    [48] = "EmbeddedStatementsNode",
+    [49] = "EmbeddedVariableNode",
+    [50] = "EnsureNode",
+    [51] = "ErrorRecoveryNode",
+    [52] = "FalseNode",
+    [53] = "FindPatternNode",
+    [54] = "FlipFlopNode",
+    [55] = "FloatNode",
+    [56] = "ForNode",
+    [57] = "ForwardingArgumentsNode",
+    [58] = "ForwardingParameterNode",
+    [59] = "ForwardingSuperNode",
+    [60] = "GlobalVariableAndWriteNode",
+    [61] = "GlobalVariableOperatorWriteNode",
+    [62] = "GlobalVariableOrWriteNode",
+    [63] = "GlobalVariableReadNode",
+    [64] = "GlobalVariableTargetNode",
+    [65] = "GlobalVariableWriteNode",
+    [66] = "HashNode",
+    [67] = "HashPatternNode",
+    [68] = "IfNode",
+    [69] = "ImaginaryNode",
+    [70] = "ImplicitNode",
+    [71] = "ImplicitRestNode",
+    [72] = "InNode",
+    [73] = "IndexAndWriteNode",
+    [74] = "IndexOperatorWriteNode",
+    [75] = "IndexOrWriteNode",
+    [76] = "IndexTargetNode",
+    [77] = "InstanceVariableAndWriteNode",
+    [78] = "InstanceVariableOperatorWriteNode",
+    [79] = "InstanceVariableOrWriteNode",
+    [80] = "InstanceVariableReadNode",
+    [81] = "InstanceVariableTargetNode",
+    [82] = "InstanceVariableWriteNode",
+    [83] = "IntegerNode",
+    [84] = "InterpolatedMatchLastLineNode",
+    [85] = "InterpolatedRegularExpressionNode",
+    [86] = "InterpolatedStringNode",
+    [87] = "InterpolatedSymbolNode",
+    [88] = "InterpolatedXStringNode",
+    [89] = "ItLocalVariableReadNode",
+    [90] = "ItParametersNode",
+    [91] = "KeywordHashNode",
+    [92] = "KeywordRestParameterNode",
+    [93] = "LambdaNode",
+    [94] = "LocalVariableAndWriteNode",
+    [95] = "LocalVariableOperatorWriteNode",
+    [96] = "LocalVariableOrWriteNode",
+    [97] = "LocalVariableReadNode",
+    [98] = "LocalVariableTargetNode",
+    [99] = "LocalVariableWriteNode",
+    [100] = "MatchLastLineNode",
+    [101] = "MatchPredicateNode",
+    [102] = "MatchRequiredNode",
+    [103] = "MatchWriteNode",
+    [104] = "ModuleNode",
+    [105] = "MultiTargetNode",
+    [106] = "MultiWriteNode",
+    [107] = "NextNode",
+    [108] = "NilNode",
+    [109] = "NoBlockParameterNode",
+    [110] = "NoKeywordsParameterNode",
+    [111] = "NumberedParametersNode",
+    [112] = "NumberedReferenceReadNode",
+    [113] = "OptionalKeywordParameterNode",
+    [114] = "OptionalParameterNode",
+    [115] = "OrNode",
+    [116] = "ParametersNode",
+    [117] = "ParenthesesNode",
+    [118] = "PinnedExpressionNode",
+    [119] = "PinnedVariableNode",
+    [120] = "PostExecutionNode",
+    [121] = "PreExecutionNode",
+    [122] = "ProgramNode",
+    [123] = "RangeNode",
+    [124] = "RationalNode",
+    [125] = "RedoNode",
+    [126] = "RegularExpressionNode",
+    [127] = "RequiredKeywordParameterNode",
+    [128] = "RequiredParameterNode",
+    [129] = "RescueModifierNode",
+    [130] = "RescueNode",
+    [131] = "RestParameterNode",
+    [132] = "RetryNode",
+    [133] = "ReturnNode",
+    [134] = "SelfNode",
+    [135] = "ShareableConstantNode",
+    [136] = "SingletonClassNode",
+    [137] = "SourceEncodingNode",
+    [138] = "SourceFileNode",
+    [139] = "SourceLineNode",
+    [140] = "SplatNode",
+    [141] = "StatementsNode",
+    [142] = "StringNode",
+    [143] = "SuperNode",
+    [144] = "SymbolNode",
+    [145] = "TrueNode",
+    [146] = "UndefNode",
+    [147] = "UnlessNode",
+    [148] = "UntilNode",
+    [149] = "WhenNode",
+    [150] = "WhileNode",
+    [151] = "XStringNode",
+    [152] = "YieldNode",
+};
+
 static pm_node_t *
 parse_expression(pm_parser_t *parser, pm_binding_power_t binding_power, uint8_t flags, pm_diagnostic_id_t diag_id, uint16_t depth) {
     if (PRISM_UNLIKELY(depth >= PRISM_DEPTH_MAXIMUM)) {
@@ -21994,7 +22173,9 @@ parse_expression(pm_parser_t *parser, pm_binding_power_t binding_power, uint8_t 
         return UP(pm_error_recovery_node_create(parser, PM_TOKEN_START(parser, &parser->current), PM_TOKEN_LENGTH(&parser->current)));
     }
 
+    fprintf(stderr, "%*s" TC_ENTER ">> enter parse_expression" TC_R TC_DIM " depth=%d bp=%d" TC_R " tok=%s\n", depth * 2, "", depth, binding_power, pm_token_str(parser->current.type));
     pm_node_t *node = parse_expression_prefix(parser, binding_power, flags, diag_id, depth);
+    fprintf(stderr, "%*s" TC_PREFIX "   prefix" TC_R " -> " TC_NODE "%s" TC_R "\n", depth * 2, "", pm_trace_node_names[PM_NODE_TYPE(node)]);
 
     // Some prefix nodes are statements and can only be followed by modifiers
     // (if/unless/while/until/rescue) or nothing at all. We check these cheaply
@@ -22040,8 +22221,17 @@ parse_expression(pm_parser_t *parser, pm_binding_power_t binding_power, uint8_t 
         binding_power <= current_binding_powers.left &&
         current_binding_powers.binary
      ) {
+        fprintf(stderr, "%*s" TC_TAKE "   while tok=%s:" TC_R TC_DIM " bp=%d <= left=%d" TC_R " -> " TC_TAKE "TAKE" TC_R "\n",
+                depth * 2, "", pm_token_str(current_token_type),
+                binding_power, current_binding_powers.left);
+        fprintf(stderr, "%*s" TC_INFIX "   infix begin" TC_R TC_DIM " (parse right at bp=%d)" TC_R "\n",
+                depth * 2, "", current_binding_powers.right);
         node = parse_expression_infix(parser, node, binding_power, current_binding_powers.right, flags, (uint16_t) (depth + 1));
-        if (parse_expression_terminator(parser, node)) return node;
+        fprintf(stderr, "%*s" TC_INFIX "   infix end" TC_R " -> " TC_NODE "%s" TC_R "\n", depth * 2, "", pm_trace_node_names[PM_NODE_TYPE(node)]);
+        if (parse_expression_terminator(parser, node)) {
+            fprintf(stderr, "%*s" TC_ENTER "<< exit  parse_expression" TC_R TC_DIM " depth=%d (terminator)" TC_R " -> " TC_NODE "%s" TC_R "\n", depth * 2, "", depth, pm_trace_node_names[PM_NODE_TYPE(node)]);
+            return node;
+        }
 
         // If the operator is nonassoc and we should not be able to parse the
         // upcoming infix operator, break.
@@ -22131,11 +22321,16 @@ parse_expression(pm_parser_t *parser, pm_binding_power_t binding_power, uint8_t 
                 binding_power > next_binding_powers.left ||
                 (PM_NODE_TYPE_P(node, PM_CALL_NODE) && pm_call_node_command_p((pm_call_node_t *) node))
             ) {
+                fprintf(stderr, "%*s" TC_ENTER "<< exit  parse_expression" TC_R TC_DIM " depth=%d (context terminator)" TC_R " -> " TC_NODE "%s" TC_R "\n", depth * 2, "", depth, pm_trace_node_names[PM_NODE_TYPE(node)]);
                 return node;
             }
         }
     }
 
+    fprintf(stderr, "%*s" TC_STOP "   while tok=%s:" TC_R TC_DIM " bp=%d > left=%d (or not binary)" TC_R " -> " TC_STOP "STOP" TC_R "\n",
+            depth * 2, "", pm_token_str(parser->current.type),
+            binding_power, pm_binding_powers[parser->current.type].left);
+    fprintf(stderr, "%*s" TC_ENTER "<< exit  parse_expression" TC_R TC_DIM " depth=%d" TC_R " -> " TC_NODE "%s" TC_R "\n", depth * 2, "", depth, pm_trace_node_names[PM_NODE_TYPE(node)]);
     return node;
 }
 
@@ -22237,8 +22432,10 @@ parse_program(pm_parser_t *parser) {
     pm_node_list_t current_block_exits = { 0 };
     pm_node_list_t *previous_block_exits = push_block_exits(parser, &current_block_exits);
 
+    fprintf(stderr, TC_ENTER TC_NODE "program begin" TC_R "\n");
     parser_lex(parser);
     pm_statements_node_t *statements = parse_statements(parser, PM_CONTEXT_MAIN, 0);
+    fprintf(stderr, TC_ENTER TC_NODE "program end" TC_R " -> ProgramNode\n");
 
     if (statements != NULL && !parser->parsing_eval) {
         // If we have statements, then the top-level statement should be
